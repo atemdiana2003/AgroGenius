@@ -1,0 +1,1174 @@
+openapi: 3.0.3
+info:
+  title: AgroGenius HarvestGuard API
+  version: 0.1.0
+  description: >
+    Pilot REST API. User-entered market prices are not live/official feeds.
+    Experimental storage thresholds are not food-safety limits. Times are UTC.
+servers:
+  - url: http://localhost:3000/api
+    description: Local development only
+tags:
+  - name: Auth
+  - name: Batches
+  - name: Preservation
+  - name: Markets
+  - name: Marketplace
+  - name: Payments
+  - name: Notifications
+  - name: Admin
+  - name: Sync
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register as farmer or buyer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Register'
+      responses:
+        '201':
+          description: Profile created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Success'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with phone or email and password
+      parameters:
+        - in: header
+          name: X-Refresh-Transport
+          required: false
+          description: Set to body only for non-browser clients that cannot use the default HttpOnly cookie.
+          schema: { type: string, enum: [cookie, body], default: cookie }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Access token/profile; default transport sets the HttpOnly refresh cookie and omits the refresh token from JSON. Body transport returns the refresh token in JSON.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        '401':
+          $ref: '#/components/responses/Error'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate refresh credential
+      parameters:
+        - in: header
+          name: X-Refresh-Transport
+          required: false
+          description: Use body only when supplying the refresh token in JSON as a non-browser client.
+          schema: { type: string, enum: [cookie, body], default: cookie }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          {
+            description: Rotates refresh credentials; default cookie transport omits the refresh token from JSON.,
+          }
+        '401': { $ref: '#/components/responses/Error' }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh credential
+      parameters:
+        - in: header
+          name: X-Refresh-Transport
+          required: false
+          description: Use body only when supplying the refresh token in JSON as a non-browser client.
+          schema: { type: string, enum: [cookie, body], default: cookie }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200': { description: Revoked and cookie cleared }
+        '400': { $ref: '#/components/responses/Error' }
+  /auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request password reset (disabled in production until delivery is configured)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string }
+      responses:
+        '200': { description: Generic reset acknowledgement }
+        '503':
+          description: Reset delivery is not configured; response is identical for all account identifiers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Consume a one-use reset token
+      responses:
+        '200': { description: Password reset and refresh sessions revoked }
+        '400': { $ref: '#/components/responses/Error' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Compatibility alias for the authenticated user's profile }
+    patch:
+      tags: [Auth]
+      deprecated: true
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+      responses:
+        '200': { description: Compatibility alias for PATCH /me }
+  /me:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Current profile with account preferences }
+    patch:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+      responses:
+        '200':
+          {
+            description: Updated own profile/preferences with incremented version; sensitive credentials are omitted,
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /farms:
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated active farms owned by the authenticated farmer }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, community]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 160 }
+                community: { type: string, minLength: 1, maxLength: 120 }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+              description: Coordinates are optional; provide both latitude and longitude or neither.
+      responses:
+        '201': { description: Farm created; precise location is optional }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /farms/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Owned farm }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expectedVersion: { type: integer, minimum: 1 }
+                name: { type: string, minLength: 1, maxLength: 160 }
+                community: { type: string, minLength: 1, maxLength: 120 }
+                latitude: { type: number, nullable: true, minimum: -90, maximum: 90 }
+                longitude: { type: number, nullable: true, minimum: -180, maximum: 180 }
+              description: Coordinates must be set or cleared together.
+      responses:
+        '200': { description: Updated farm }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Auth]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Farm archived (soft delete) }
+        '404': { $ref: '#/components/responses/Error' }
+  /units:
+    get:
+      tags: [Markets]
+      responses:
+        '200': { description: Active supported unit codes and labels; units are not converted }
+  /admin/units:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: All supported units, including inactive codes }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/units/{code}:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: code
+          required: true
+          schema: { $ref: '#/components/schemas/Unit' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                label: { type: string, minLength: 1, maxLength: 80 }
+                description: { type: string, nullable: true, maxLength: 240 }
+                active: { type: boolean }
+      responses:
+        '200': { description: Updated unit reference; audited }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /batches:
+    get:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/BatchStatus' }
+        - in: query
+          name: cropId
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Paginated owned batches; admin may view all }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBatch'
+      responses:
+        '201': { description: Batch and initial inventory movement committed }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /batches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Owned batch and movement history }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { type: integer, minimum: 1 }
+                notes: { type: string, nullable: true, maxLength: 2000 }
+                storageUnitId: { type: string, format: uuid, nullable: true }
+                baselineCondition: { type: string, nullable: true, maxLength: 1000 }
+      responses:
+        '200': { description: Updated owned batch }
+        '409': { $ref: '#/components/responses/Error' }
+  /batches/{id}/movements:
+    post:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201': { description: Audited quantity movement committed }
+        '409': { $ref: '#/components/responses/Error' }
+  /batches/{id}/archive:
+    post:
+      tags: [Batches]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Zero-quantity terminal batch archived }
+  /batches/{id}/readings:
+    get:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Paginated, time-ordered chart readings }
+  /readings:
+    post:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Reading'
+      responses:
+        '201':
+          { description: Manual/simulated reading committed; warning notification is deduplicated }
+        '400': { $ref: '#/components/responses/Error' }
+  /device/readings:
+    post:
+      tags: [Preservation]
+      security: [{ deviceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/Reading'
+                - type: object
+                  required: [sensorId, clientOperationId]
+                  properties:
+                    source: { type: string, enum: [SENSOR] }
+                    sensorId: { type: string, format: uuid }
+                    clientOperationId: { type: string, format: uuid }
+      responses:
+        '201': { description: Authenticated device reading committed }
+        '401': { $ref: '#/components/responses/Error' }
+  /quality-observations:
+    post:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityObservation'
+      responses:
+        '201': { description: Owner observation and spoilage movement committed }
+  /trials:
+    post:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Admin-created trial with dates/protocol/limitations }
+  /trial-groups:
+    post:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Admin-created cooler-test or shaded-control group }
+  /trials/{id}/comparison:
+    get:
+      tags: [Preservation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Trial/control groups, trends, missing days and limitations }
+  /crops:
+    get:
+      tags: [Markets]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Paginated active crop reference data }
+  /markets:
+    get:
+      tags: [Markets]
+      responses:
+        '200': { description: Paginated active market reference data }
+  /prices:
+    get:
+      tags: [Markets]
+      parameters:
+        - in: query
+          name: cropId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: marketId
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Historical user-entered prices with source/freshness metadata }
+    post:
+      tags: [Markets]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceObservation'
+      responses:
+        '201': { description: Append-only sourced price and deduplicated rule notifications }
+  /price-alert-rules:
+    get:
+      tags: [Markets]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated owner rules }
+    post:
+      tags: [Markets]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceAlertRule'
+      responses:
+        '201': { description: Validated rule with currency and unit }
+  /price-alert-rules/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    patch:
+      tags: [Markets]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Owner/admin rule update }
+    delete:
+      tags: [Markets]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Owner/admin rule deletion }
+  /listings:
+    get:
+      tags: [Marketplace]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Active, non-expired public listings without private contact fields }
+    post:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Listing'
+      responses:
+        '201': { description: Owner listing within available inventory }
+  /listings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Marketplace]
+      responses:
+        '200': { description: Active public listing without phone/email }
+    patch:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Owner/admin version-checked listing update }
+        '409': { $ref: '#/components/responses/Error' }
+  /listings/{id}/offers:
+    post:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Offer'
+      responses:
+        '201': { description: Buyer offer on active listing }
+  /listings/{id}/contact-requests:
+    post:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '201': { description: Buyer contact request; no phone details disclosed }
+  /offers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Buyer/listing-owner/admin scoped offer }
+    patch:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion, status]
+              properties:
+                expectedVersion: { type: integer, minimum: 1 }
+                status: { type: string, enum: [ACCEPTED, REJECTED, WITHDRAWN] }
+      responses:
+        '200': { description: Buyer withdraw or listing owner/admin decide a pending offer }
+        '409': { $ref: '#/components/responses/Error' }
+  /offers:
+    get:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Role-scoped paginated offers }
+  /offers/{id}/confirm-sale:
+    post:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { type: integer, minimum: 1 }
+      responses:
+        '201': { description: Explicitly confirmed sale and inventory movement }
+  /payments/offers/{id}:
+    post:
+      tags: [Payments]
+      summary: Create or replay a payment for a seller-confirmed accepted offer
+      description: Amount is derived from the accepted offer's integer XAF total. No amount, provider ID, or payment status is accepted from the client.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '201':
+          description: Payment link created with status PENDING
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Payment' }
+                  meta: { type: object }
+        '200':
+          description: Existing payment returned for an exact replay
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Payment' }
+                  meta: { type: object }
+        '202':
+          description: Provider outcome is uncertain; reconcile before another initiation attempt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Payment' }
+                  meta: { type: object }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get own payment status and refresh from Fapshi when permitted
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: User-scoped payment status; provider polling is throttled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Payment' }
+                  meta: { type: object }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /payments/fapshi/webhook:
+    post:
+      tags: [Payments]
+      summary: Receive an authenticated Fapshi status notification
+      description: Requires x-wh-secret and re-queries the authoritative Fapshi status API before changing payment state. A redirect or webhook payload alone never proves payment.
+      parameters:
+        - in: header
+          name: x-wh-secret
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transId, status]
+              properties:
+                transId: { type: string }
+                status: { type: string, enum: [SUCCESSFUL, FAILED, EXPIRED] }
+                amount: { type: integer, minimum: 100 }
+                externalId: { type: string }
+                userId: { type: string }
+      responses:
+        '200':
+          {
+            description: Authenticated webhook received and recorded; unknown or duplicate receipts are acknowledged without applying unverified effects,
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /notifications:
+    get:
+      tags: [Notifications]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Recipient's paginated in-app notification history }
+  /notifications/{id}:
+    patch:
+      tags: [Notifications]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Recipient read/acknowledgement state }
+  /notifications/{id}/sms:
+    post:
+      tags: [Notifications]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          {
+            description: Consent-checked simulated or disabled delivery status; never implies real SMS,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /contact-requests/{id}:
+    get:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          {
+            description: Contact request scoped to requester/owner; phone only after approval and consent,
+          }
+    patch:
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Listing owner/admin decides request }
+  /admin/metrics:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Admin pilot counts; no inferred loss reduction/profit }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/crops:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Admin-created crop reference }
+  /admin/crops/{id}:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Admin crop change with audit record }
+  /admin/markets:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Admin-created market reference }
+  /admin/markets/{id}:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Admin market change with audit record }
+  /admin/exports/batches.csv:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          {
+            description: Paginated CSV with formula-safe cells,
+            no user phone/email and X-Export-Total,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/exports/prices.csv:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          {
+            description: Paginated historical sourced prices as safe CSV with units,
+            currencies,
+            demo labels and X-Export-Total,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/exports/readings.csv:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          {
+            description: Paginated CSV with UTC measurement/ingestion times,
+            units,
+            source and simulated provenance,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/exports/quality-observations.csv:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          {
+            description: Paginated privacy-minimized CSV with quality flags,
+            spoilage quantity and unit,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/exports/trial-comparisons.csv:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          {
+            description: Paginated trial/group/batch CSV with protocol,
+            limitations,
+            mass and missing observation days,
+          }
+        '403': { $ref: '#/components/responses/Error' }
+  /sync/operations:
+    get:
+      tags: [Sync]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated actor-owned idempotency/synchronization records }
+  /sync/operations/{clientOperationId}:
+    get:
+      tags: [Sync]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: clientOperationId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Actor-owned operation state and committed response }
+  /reports:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Farmer/buyer report submitted for moderation }
+  /reports/mine:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated reports created by current user }
+  /admin/reports:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Admin paginated moderation queue }
+  /admin/reports/{id}:
+    patch:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Admin outcome and audit event recorded }
+  /admin/listings/{id}/moderate:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { description: Admin listing moderation and audit event }
+  /admin/audit:
+    get:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Paginated admin audit history }
+  /admin/storage-units:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Storage unit reference created }
+  /admin/sensors:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Sensor registered without credential exposure }
+  /admin/devices:
+    post:
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Device provisioned; raw device token returned once }
+  /health:
+    get:
+      responses:
+        '200': { description: Process is responding }
+  /ready:
+    get:
+      responses:
+        '200': { description: PostgreSQL is available }
+        '500': { description: Dependency unavailable; details are not exposed }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    deviceAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Send the exact value Device <token>.
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      in: query
+      name: pageSize
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Stable error envelope; request ID supports safe support correlation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ProfilePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        community: { type: string, minLength: 1, maxLength: 120 }
+        preferredLanguage: { type: string, minLength: 2, maxLength: 12 }
+        cooperative: { type: string, nullable: true, maxLength: 160 }
+        smsConsent: { type: boolean }
+        smsOptOut: { type: boolean }
+        quietHoursStart:
+          { type: string, nullable: true, pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$' }
+        quietHoursEnd:
+          { type: string, nullable: true, pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$' }
+    Success:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {}
+        meta: { type: object }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: array, items: {} }
+            requestId: { type: string }
+    PaymentStatus:
+      type: string
+      enum: [CREATED, PENDING, SUCCESSFUL, FAILED, EXPIRED, INITIATION_UNKNOWN]
+    Payment:
+      type: object
+      required:
+        [
+          id,
+          reference,
+          offerId,
+          amount,
+          currency,
+          provider,
+          mode,
+          checkoutUrl,
+          status,
+          failureCode,
+          createdAt,
+          updatedAt,
+          completedAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string, format: uuid }
+        offerId: { type: string, format: uuid }
+        amount: { type: integer, minimum: 100, description: Exact XAF amount; no fractional units }
+        currency: { type: string, enum: [XAF] }
+        provider: { type: string, enum: [FAPSHI, MOCK] }
+        mode: { type: string, enum: [sandbox, live, simulated] }
+        checkoutUrl: { type: string, format: uri, nullable: true }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        failureCode: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+    Register:
+      type: object
+      required: [displayName, password, role, community]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        phone: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, format: password, minLength: 12, maxLength: 128 }
+        role: { type: string, enum: [FARMER, BUYER] }
+        community: { type: string }
+        preferredLanguage: { type: string, default: en }
+        smsConsent: { type: boolean, default: false }
+    BatchStatus:
+      type: string
+      enum: [STORED, LISTED, PARTIALLY_SOLD, SOLD, SPOILED, ARCHIVED]
+    Unit:
+      type: string
+      enum: [KG, CRATE, PIECE]
+    CreateBatch:
+      type: object
+      required: [cropId, harvestAt, quantity, unit, community, storageMethod]
+      properties:
+        cropId: { type: string, format: uuid }
+        harvestAt: { type: string, format: date-time }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        unit: { $ref: '#/components/schemas/Unit' }
+        community: { type: string }
+        storageMethod: { type: string, enum: [COOLER, SHADED_CONTROL, OTHER] }
+        storageUnitId: { type: string, format: uuid }
+        trialGroupId: { type: string, format: uuid }
+        clientOperationId: { type: string, format: uuid }
+    Reading:
+      type: object
+      required: [batchId, recordedAt, temperatureC, relativeHumidityPercent]
+      properties:
+        batchId: { type: string, format: uuid }
+        storageUnitId: { type: string, format: uuid }
+        recordedAt: { type: string, format: date-time }
+        temperatureC: { type: number, minimum: -10, maximum: 60 }
+        relativeHumidityPercent: { type: number, minimum: 0, maximum: 100 }
+        source: { type: string, enum: [MANUAL, SENSOR, SIMULATED], default: MANUAL }
+        clientOperationId: { type: string, format: uuid }
+    PriceObservation:
+      type: object
+      required: [cropId, marketId, amount, currency, unit, observedAt, source]
+      properties:
+        cropId: { type: string, format: uuid }
+        marketId: { type: string, format: uuid }
+        amount: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        unit: { $ref: '#/components/schemas/Unit' }
+        observedAt: { type: string, format: date-time }
+        source: { type: string, minLength: 3, maxLength: 250 }
+        clientOperationId: { type: string, format: uuid }
+    PriceAlertRule:
+      type: object
+      required: [cropId, marketId, targetAmount, currency, unit, condition]
+      properties:
+        cropId: { type: string, format: uuid }
+        marketId: { type: string, format: uuid }
+        targetAmount: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        unit: { $ref: '#/components/schemas/Unit' }
+        condition: { type: string, enum: [AT_OR_ABOVE, AT_OR_BELOW] }
+        active: { type: boolean, default: true }
+    Listing:
+      type: object
+      required: [batchId, quantity, unit, availableUntil, collectionArea]
+      properties:
+        batchId: { type: string, format: uuid }
+        quantity: { type: number, exclusiveMinimum: 0, multipleOf: 0.001 }
+        unit: { $ref: '#/components/schemas/Unit' }
+        askingPrice: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        availableFrom: { type: string, format: date-time }
+        availableUntil: { type: string, format: date-time }
+        collectionArea: { type: string, maxLength: 180 }
+        contactPreference: { type: string, enum: [IN_APP, PHONE_AFTER_REQUEST] }
+        contactConsent: { type: boolean, default: false }
+        clientOperationId: { type: string, format: uuid }
+    Offer:
+      type: object
+      required: [quantity, unit]
+      properties:
+        quantity: { type: number, exclusiveMinimum: 0, multipleOf: 0.001 }
+        unit: { $ref: '#/components/schemas/Unit' }
+        offeredPrice: { type: number, exclusiveMinimum: 0, multipleOf: 0.01 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        message: { type: string, maxLength: 1000 }
+        clientOperationId: { type: string, format: uuid }
+    QualityObservation:
+      type: object
+      required:
+        [batchId, observedAt, discardedQuantity, unit, firmness, visibleMold, leakage, shriveling]
+      properties:
+        batchId: { type: string, format: uuid }
+        observedAt: { type: string, format: date-time }
+        discardedQuantity: { type: number, minimum: 0, multipleOf: 0.001 }
+        unit: { $ref: '#/components/schemas/Unit' }
+        firmness: { type: string, enum: [FIRM, SOFT, MIXED, NOT_ASSESSED] }
+        visibleMold: { type: boolean }
+        leakage: { type: boolean }
+        shriveling: { type: boolean }
+        qualityScore: { type: integer, minimum: 1, maximum: 5 }
+        notes: { type: string, maxLength: 2000 }
+        clientOperationId: { type: string, format: uuid }

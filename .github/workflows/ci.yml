@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: harvestguard_test
+          POSTGRES_USER: harvestguard
+          POSTGRES_PASSWORD: harvestguard_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U harvestguard -d harvestguard_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://harvestguard:harvestguard_ci_only@127.0.0.1:5432/harvestguard_test
+      NODE_ENV: test
+      JWT_ACCESS_SECRET: ci-jwt-secret-not-for-deployment-at-least-32
+      DEVICE_TOKEN_PEPPER: ci-device-pepper-distinct-not-for-deployment-32
+      COOKIE_SECURE: 'false'
+      ALLOWED_ORIGINS: http://localhost:5173
+      LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy migrations and seed references
+        run: |
+          npm run db:deploy
+          npm run db:seed
+      - name: Run non-database test suite
+        run: npm test
+      - name: Run PostgreSQL-backed tests
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgresql://harvestguard:harvestguard_ci_only@127.0.0.1:5432/harvestguard_test
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm audit
+      - run: npm run audit:runtime
+      - name: Validate OpenAPI YAML syntax
+        run: |
+          npx prettier --check docs/openapi.yaml
+          npm run validate:openapi
+      - name: Smoke test API health and readiness
+        shell: bash
+        run: |
+          node apps/api/dist/server.js &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true; wait "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          API_BASE_URL=http://127.0.0.1:3000 npm run smoke
+        env:
+          PORT: '3000'
+          SMS_PROVIDER: disabled
+      - name: Build Docker image without publishing
+        run: docker build --file apps/api/Dockerfile --tag harvestguard-api:ci .

@@ -1,0 +1,39 @@
+{
+  "name": "agrogenius-harvestguard",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.19"
+  },
+  "workspaces": [
+    "apps/api",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @harvestguard/api",
+    "build": "npm run build -w @harvestguard/contracts && npm run build -w @harvestguard/api",
+    "typecheck": "npm run build -w @harvestguard/contracts && npm run typecheck -w @harvestguard/api",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "audit:runtime": "npm audit --omit=dev --omit=optional",
+    "validate:openapi": "node scripts/validate-openapi.mjs",
+    "test": "npm run test -w @harvestguard/api",
+    "db:generate": "npm run db:generate -w @harvestguard/api",
+    "db:migrate": "npm run db:migrate -w @harvestguard/api",
+    "db:deploy": "npm run db:deploy -w @harvestguard/api",
+    "db:seed": "npm run db:seed -w @harvestguard/api",
+    "admin:provision": "npm run admin:provision -w @harvestguard/api",
+    "db:studio": "npm run db:studio -w @harvestguard/api",
+    "smoke": "node scripts/smoke-test.mjs",
+    "simulate:reading": "node scripts/simulate-reading.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/express": "^4.17.25",
+    "eslint": "^9.24.0",
+    "globals": "^16.0.0",
+    "prettier": "^3.5.3",
+    "typescript-eslint": "^8.29.0"
+  }
+}
